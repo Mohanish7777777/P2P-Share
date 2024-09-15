@@ -27,7 +27,7 @@
   <textarea id="signalingTextarea" placeholder="Copy/Paste signaling data here" rows="10" cols="50"></textarea>
   
   <script>
-    const signalingUrl = 'https://dlxx.mohanishx1.workers.dev/';
+    const signalingUrl = 'https://<YOUR-CF-WORKER-URL>/';
     const peerId = Math.random().toString(36).substring(7);
     let peerConnection;
     let dataChannel;
@@ -96,13 +96,30 @@
 
     // Connect as receiver
     connectButton.onclick = async () => {
-      await setupConnection(false);
-      const signal = JSON.parse(signalingTextarea.value);
-      if (signal.sdp) {
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-        const answer = await peerConnection.createAnswer();
-        await peerConnection.setLocalDescription(answer);
-        await sendSignal({ peerId, message: { sdp: peerConnection.localDescription } });
+      try {
+        await setupConnection(false);
+
+        // Get and parse the signaling data entered by the user
+        const signal = signalingTextarea.value.trim();
+        if (!signal) {
+          return alert('Please enter signaling data!');
+        }
+
+        const parsedSignal = JSON.parse(signal);
+
+        if (parsedSignal.sdp) {
+          // Set remote description and create an answer
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(parsedSignal.sdp));
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+          await sendSignal({ peerId, message: { sdp: peerConnection.localDescription } });
+        } else if (parsedSignal.candidate) {
+          // Add ICE candidate
+          await peerConnection.addIceCandidate(new RTCIceCandidate(parsedSignal.candidate));
+        }
+      } catch (error) {
+        console.error('Error connecting as receiver:', error);
+        alert('Error connecting as receiver. Check console for details.');
       }
     };
 
