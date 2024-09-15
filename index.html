@@ -1,107 +1,121 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>P2P File Sharing</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>P2P File Transfer</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 50px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    input, button {
+      margin: 10px;
+    }
+    #fileInput {
+      margin-bottom: 20px;
+    }
+  </style>
 </head>
 <body>
-    <input type="file" id="fileInput">
-    <button id="connectBtn">Connect and Share File</button>
-    <script>
-        const fileInput = document.getElementById('fileInput');
-        const connectBtn = document.getElementById('connectBtn');
+  <h1>P2P File Sharing with WebRTC</h1>
+  
+  <input type="file" id="fileInput" />
+  <button id="sendButton">Send File</button>
+  <button id="connectButton">Connect as Receiver</button>
 
-        let peerConnection;
-        const sessionId = 'your-session-id';  // Replace with a unique session ID
-        const signalingServer = 'https://dlxx.mohanishx1.workers.dev/';  // Your CF Worker URL
+  <textarea id="signalingTextarea" placeholder="Copy/Paste signaling data here" rows="10" cols="50"></textarea>
+  
+  <script>
+    let peerConnection;
+    let dataChannel;
+    const signalingUrl = 'https://dlxx.mohanishx1.workers.dev/';
+    const peerId = Math.random().toString(36).substring(7);  // Generate a simple random peer ID
 
-        // Initialize WebRTC connection
-        function initWebRTC() {
-            peerConnection = new RTCPeerConnection();
+    const sendButton = document.getElementById('sendButton');
+    const connectButton = document.getElementById('connectButton');
+    const fileInput = document.getElementById('fileInput');
+    const signalingTextarea = document.getElementById('signalingTextarea');
 
-            peerConnection.onicecandidate = event => {
-                if (event.candidate) {
-                    sendSignalingData({ candidate: event.candidate });
-                }
-            };
+    // Setup WebRTC
+    async function setupConnection() {
+      peerConnection = new RTCPeerConnection();
+      
+      // Create a data channel for file transfer
+      dataChannel = peerConnection.createDataChannel('fileChannel');
+      dataChannel.onopen = () => console.log('Data channel opened');
+      dataChannel.onmessage = receiveFile;
 
-            peerConnection.ondatachannel = event => {
-                const receiveChannel = event.channel;
-                receiveChannel.onmessage = e => {
-                    console.log('Received file chunk:', e.data);
-                    // Here you can handle received file data
-                };
-            };
-
-            return peerConnection.createDataChannel('fileTransfer');
+      peerConnection.onicecandidate = async (event) => {
+        if (event.candidate) {
+          await sendSignal({ peerId, message: { candidate: event.candidate } });
         }
+      };
+    }
 
-        // Send signaling data to the Cloudflare Worker
-        async function sendSignalingData(data) {
-            await fetch(`${signalingServer}?session=${sessionId}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data),
-            });
+    // Send file
+    sendButton.onclick = async () => {
+      if (!fileInput.files.length) return alert('Please select a file');
+
+      const file = fileInput.files[0];
+      const CHUNK_SIZE = 16 * 1024; // Send 16 KB chunks
+
+      // Read the file and send it in chunks
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        let offset = 0;
+        while (offset < file.size) {
+          const chunk = e.target.result.slice(offset, offset + CHUNK_SIZE);
+          dataChannel.send(chunk);
+          offset += CHUNK_SIZE;
         }
+        dataChannel.send('EOF');  // Signal end of file transfer
+      };
+      reader.readAsArrayBuffer(file);
 
-        // Get signaling data from the Cloudflare Worker
-        async function getSignalingData() {
-            const response = await fetch(`${signalingServer}?session=${sessionId}`);
-            if (response.status === 200) {
-                const data = await response.json();
-                if (data.sdp) {
-                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
-                    if (data.sdp.type === 'offer') {
-                        const answer = await peerConnection.createAnswer();
-                        await peerConnection.setLocalDescription(answer);
-                        sendSignalingData({ sdp: peerConnection.localDescription });
-                    }
-                } else if (data.candidate) {
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-                }
-            }
-        }
+      // Create and send an SDP offer
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      await sendSignal({ peerId, message: { sdp: peerConnection.localDescription } });
+      signalingTextarea.value = JSON.stringify(peerConnection.localDescription);
+    };
 
-        // Handle file selection and sending
-        connectBtn.onclick = async () => {
-            const dataChannel = initWebRTC();
+    // Connect as the receiver
+    connectButton.onclick = async () => {
+      await setupConnection();
 
-            // Create an offer
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
+      // Get the signaling data from the sender
+      const signal = JSON.parse(signalingTextarea.value);
+      if (signal.sdp) {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        await sendSignal({ peerId, message: { sdp: peerConnection.localDescription } });
+      }
+    };
 
-            sendSignalingData({ sdp: peerConnection.localDescription });
+    // Send signaling message to the server
+    async function sendSignal(signal) {
+      await fetch(signalingUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(signal)
+      });
+    }
 
-            // Fetch signaling data (from the other peer)
-            await getSignalingData();
-
-            // Send file data over WebRTC when ready
-            dataChannel.onopen = () => {
-                const file = fileInput.files[0];
-                if (file) {
-                    const chunkSize = 16384;
-                    let offset = 0;
-                    const reader = new FileReader();
-
-                    reader.onload = e => {
-                        dataChannel.send(e.target.result);
-                        offset += e.target.result.byteLength;
-                        if (offset < file.size) {
-                            readSlice(offset);
-                        }
-                    };
-
-                    const readSlice = o => {
-                        const slice = file.slice(offset, o + chunkSize);
-                        reader.readAsArrayBuffer(slice);
-                    };
-
-                    readSlice(0);
-                }
-            };
-        };
-    </script>
+    // Receive file
+    function receiveFile(event) {
+      const received = event.data;
+      if (received === 'EOF') {
+        console.log('File transfer complete');
+      } else {
+        // Handle the file chunk received
+        console.log('Received chunk:', received);
+      }
+    }
+  </script>
 </body>
 </html>
