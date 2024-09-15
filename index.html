@@ -41,13 +41,22 @@
     const signalingTextarea = document.getElementById('signalingTextarea');
 
     // Setup WebRTC
-    async function setupConnection() {
+    async function setupConnection(isSender) {
       peerConnection = new RTCPeerConnection();
-      
-      // Create a data channel for file transfer
-      dataChannel = peerConnection.createDataChannel('fileChannel');
-      dataChannel.onopen = () => console.log('Data channel opened');
-      dataChannel.onmessage = receiveFile;
+
+      if (isSender) {
+        // Create a data channel for file transfer if this is the sender
+        dataChannel = peerConnection.createDataChannel('fileChannel');
+        dataChannel.onopen = () => console.log('Data channel opened');
+        dataChannel.onmessage = receiveFile;
+      } else {
+        // Set up data channel handling for the receiver
+        peerConnection.ondatachannel = (event) => {
+          dataChannel = event.channel;
+          dataChannel.onopen = () => console.log('Data channel opened');
+          dataChannel.onmessage = receiveFile;
+        };
+      }
 
       peerConnection.onicecandidate = async (event) => {
         if (event.candidate) {
@@ -59,18 +68,26 @@
     // Send file
     sendButton.onclick = async () => {
       if (!fileInput.files.length) return alert('Please select a file');
+      
+      if (!peerConnection) await setupConnection(true);  // Ensure connection is set up for the sender
 
       const file = fileInput.files[0];
       const CHUNK_SIZE = 16 * 1024; // Send 16 KB chunks
 
-      // Read the file and send it in chunks
       const reader = new FileReader();
       reader.onload = async (e) => {
         let offset = 0;
         while (offset < file.size) {
           const chunk = e.target.result.slice(offset, offset + CHUNK_SIZE);
-          dataChannel.send(chunk);
-          offset += CHUNK_SIZE;
+          
+          // Ensure the data channel is open before sending
+          if (dataChannel.readyState === 'open') {
+            dataChannel.send(chunk);
+            offset += CHUNK_SIZE;
+          } else {
+            console.error('Data channel is not open yet.');
+            break;
+          }
         }
         dataChannel.send('EOF');  // Signal end of file transfer
       };
@@ -85,7 +102,7 @@
 
     // Connect as the receiver
     connectButton.onclick = async () => {
-      await setupConnection();
+      await setupConnection(false);  // Set up connection for receiver
 
       // Get the signaling data from the sender
       const signal = JSON.parse(signalingTextarea.value);
