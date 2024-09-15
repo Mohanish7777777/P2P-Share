@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>P2P File Transfer</title>
+  <title>P2P File Sharing</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -12,11 +12,8 @@
       flex-direction: column;
       align-items: center;
     }
-    input, button {
+    input, button, textarea {
       margin: 10px;
-    }
-    #fileInput {
-      margin-bottom: 20px;
     }
   </style>
 </head>
@@ -26,31 +23,29 @@
   <input type="file" id="fileInput" />
   <button id="sendButton">Send File</button>
   <button id="connectButton">Connect as Receiver</button>
-
+  
   <textarea id="signalingTextarea" placeholder="Copy/Paste signaling data here" rows="10" cols="50"></textarea>
   
   <script>
+    const signalingUrl = 'https://dlxx.mohanishx1.workers.dev/';
+    const peerId = Math.random().toString(36).substring(7);
     let peerConnection;
     let dataChannel;
-    const signalingUrl = 'https://dlxx.mohanishx1.workers.dev/';
-    const peerId = Math.random().toString(36).substring(7);  // Generate a simple random peer ID
 
     const sendButton = document.getElementById('sendButton');
     const connectButton = document.getElementById('connectButton');
     const fileInput = document.getElementById('fileInput');
     const signalingTextarea = document.getElementById('signalingTextarea');
 
-    // Setup WebRTC
+    // Setup WebRTC connection
     async function setupConnection(isSender) {
       peerConnection = new RTCPeerConnection();
 
       if (isSender) {
-        // Create a data channel for file transfer if this is the sender
         dataChannel = peerConnection.createDataChannel('fileChannel');
         dataChannel.onopen = () => console.log('Data channel opened');
         dataChannel.onmessage = receiveFile;
       } else {
-        // Set up data channel handling for the receiver
         peerConnection.ondatachannel = (event) => {
           dataChannel = event.channel;
           dataChannel.onopen = () => console.log('Data channel opened');
@@ -68,43 +63,40 @@
     // Send file
     sendButton.onclick = async () => {
       if (!fileInput.files.length) return alert('Please select a file');
-      
-      if (!peerConnection) await setupConnection(true);  // Ensure connection is set up for the sender
+
+      await setupConnection(true);
 
       const file = fileInput.files[0];
-      const CHUNK_SIZE = 16 * 1024; // Send 16 KB chunks
+      const CHUNK_SIZE = 16 * 1024;  // 16KB chunks
 
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        let offset = 0;
-        while (offset < file.size) {
-          const chunk = e.target.result.slice(offset, offset + CHUNK_SIZE);
-          
-          // Ensure the data channel is open before sending
-          if (dataChannel.readyState === 'open') {
-            dataChannel.send(chunk);
-            offset += CHUNK_SIZE;
-          } else {
-            console.error('Data channel is not open yet.');
-            break;
+      dataChannel.onopen = () => {
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+          let offset = 0;
+          while (offset < file.size) {
+            const chunk = e.target.result.slice(offset, offset + CHUNK_SIZE);
+            if (dataChannel.readyState === 'open') {
+              dataChannel.send(chunk);
+              offset += CHUNK_SIZE;
+            } else {
+              console.error('Data channel is not open.');
+              break;
+            }
           }
-        }
-        dataChannel.send('EOF');  // Signal end of file transfer
+          dataChannel.send('EOF');  // End of file transfer
+        };
+        reader.readAsArrayBuffer(file);
       };
-      reader.readAsArrayBuffer(file);
 
-      // Create and send an SDP offer
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
       await sendSignal({ peerId, message: { sdp: peerConnection.localDescription } });
       signalingTextarea.value = JSON.stringify(peerConnection.localDescription);
     };
 
-    // Connect as the receiver
+    // Connect as receiver
     connectButton.onclick = async () => {
-      await setupConnection(false);  // Set up connection for receiver
-
-      // Get the signaling data from the sender
+      await setupConnection(false);
       const signal = JSON.parse(signalingTextarea.value);
       if (signal.sdp) {
         await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
@@ -114,12 +106,12 @@
       }
     };
 
-    // Send signaling message to the server
+    // Send signaling message to the Cloudflare Worker
     async function sendSignal(signal) {
       await fetch(signalingUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(signal)
+        body: JSON.stringify(signal),
       });
     }
 
@@ -129,8 +121,8 @@
       if (received === 'EOF') {
         console.log('File transfer complete');
       } else {
-        // Handle the file chunk received
         console.log('Received chunk:', received);
+        // Handle received file data (e.g., assemble and download)
       }
     }
   </script>
