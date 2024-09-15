@@ -105,22 +105,28 @@
           return alert('Please enter signaling data!');
         }
 
-        const parsedSignal = JSON.parse(signal);
+        // Parse the signaling data and validate it
+        let parsedSignal;
+        try {
+          parsedSignal = JSON.parse(signal);
+        } catch (error) {
+          console.error('Error parsing signaling data:', error);
+          return alert('Invalid signaling data. Please ensure the format is correct.');
+        }
 
-        if (parsedSignal.sdp) {
-          // Ensure that we pass both 'type' and 'sdp' to RTCSessionDescription
-          const remoteDescription = {
-            type: parsedSignal.sdp.type,
-            sdp: parsedSignal.sdp.sdp
-          };
+        if (parsedSignal && parsedSignal.type && parsedSignal.sdp) {
           // Set remote description and create an answer
-          await peerConnection.setRemoteDescription(new RTCSessionDescription(remoteDescription));
+          const remoteDescription = new RTCSessionDescription(parsedSignal);
+          await peerConnection.setRemoteDescription(remoteDescription);
           const answer = await peerConnection.createAnswer();
           await peerConnection.setLocalDescription(answer);
           await sendSignal({ peerId, message: { sdp: peerConnection.localDescription } });
         } else if (parsedSignal.candidate) {
           // Add ICE candidate
           await peerConnection.addIceCandidate(new RTCIceCandidate(parsedSignal.candidate));
+        } else {
+          console.error('Invalid signaling data format.');
+          return alert('Signaling data is missing "sdp" or "candidate" fields.');
         }
       } catch (error) {
         console.error('Error connecting as receiver:', error);
