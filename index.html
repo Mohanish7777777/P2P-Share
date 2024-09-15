@@ -27,7 +27,7 @@
   <textarea id="signalingTextarea" placeholder="Copy/Paste signaling data here" rows="10" cols="50"></textarea>
   
   <script>
-    const signalingUrl = 'https://dlxx.mohanishx1.workers.dev/';
+    const signalingUrl = 'https://<YOUR-CF-WORKER-URL>/';  // Replace with your Cloudflare Worker URL
     const peerId = Math.random().toString(36).substring(7);
     let peerConnection;
     let dataChannel;
@@ -108,8 +108,13 @@
         const parsedSignal = JSON.parse(signal);
 
         if (parsedSignal.sdp) {
+          // Ensure that we pass both 'type' and 'sdp' to RTCSessionDescription
+          const remoteDescription = {
+            type: parsedSignal.sdp.type,
+            sdp: parsedSignal.sdp.sdp
+          };
           // Set remote description and create an answer
-          await peerConnection.setRemoteDescription(new RTCSessionDescription(parsedSignal.sdp));
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(remoteDescription));
           const answer = await peerConnection.createAnswer();
           await peerConnection.setLocalDescription(answer);
           await sendSignal({ peerId, message: { sdp: peerConnection.localDescription } });
