@@ -3,156 +3,132 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>P2P File Sharing</title>
+  <title>File Transfer via Cloudflare Worker</title>
   <style>
     body {
       font-family: Arial, sans-serif;
-      margin: 50px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
+      max-width: 800px;
+      margin: 20px auto;
+      padding: 10px;
     }
-    input, button, textarea {
-      margin: 10px;
+    .container {
+      margin: 20px 0;
+    }
+    .progress {
+      width: 100%;
+      background-color: #f3f3f3;
+      border-radius: 10px;
+      overflow: hidden;
+      margin-top: 10px;
+    }
+    .progress-bar {
+      height: 20px;
+      background-color: #4caf50;
+      width: 0%;
     }
   </style>
 </head>
 <body>
-  <h1>P2P File Sharing with WebRTC</h1>
-  
-  <input type="file" id="fileInput" />
-  <button id="sendButton">Send File</button>
-  <button id="connectButton">Connect as Receiver</button>
-  
-  <textarea id="signalingTextarea" placeholder="Copy/Paste signaling data here" rows="10" cols="50"></textarea>
-  
+
+  <h1>File Transfer via Cloudflare Worker</h1>
+
+  <div class="container">
+    <h2>Upload a File</h2>
+    <input type="file" id="fileInput" />
+    <button onclick="uploadFile()">Upload</button>
+    <div class="progress">
+      <div id="uploadProgressBar" class="progress-bar"></div>
+    </div>
+    <p id="uploadStatus"></p>
+  </div>
+
+  <div class="container">
+    <h2>Download a File</h2>
+    <input type="text" id="fileNameInput" placeholder="Enter file name to download" />
+    <button onclick="downloadFile()">Download</button>
+    <p id="downloadStatus"></p>
+  </div>
+
   <script>
-    const signalingUrl = 'https://dlxx.mohanishx1.workers.dev/';  // Replace with your Cloudflare Worker URL
-    const peerId = Math.random().toString(36).substring(7);
-    let peerConnection;
-    let dataChannel;
+    const apiUrl = 'https://your-worker-url.workers.dev';  // Replace with your Cloudflare Worker URL
 
-    const sendButton = document.getElementById('sendButton');
-    const connectButton = document.getElementById('connectButton');
-    const fileInput = document.getElementById('fileInput');
-    const signalingTextarea = document.getElementById('signalingTextarea');
+    async function uploadFile() {
+      const fileInput = document.getElementById('fileInput');
+      const file = fileInput.files[0];
 
-    // Setup WebRTC connection
-    async function setupConnection(isSender) {
-      peerConnection = new RTCPeerConnection();
-
-      if (isSender) {
-        dataChannel = peerConnection.createDataChannel('fileChannel');
-        dataChannel.onopen = () => console.log('Data channel opened');
-        dataChannel.onmessage = receiveFile;
-      } else {
-        peerConnection.ondatachannel = (event) => {
-          dataChannel = event.channel;
-          dataChannel.onopen = () => console.log('Data channel opened');
-          dataChannel.onmessage = receiveFile;
-        };
+      if (!file) {
+        alert('Please select a file to upload');
+        return;
       }
 
-      peerConnection.onicecandidate = async (event) => {
-        if (event.candidate) {
-          await sendSignal({ peerId, message: { candidate: event.candidate } });
+      const chunkSize = 5 * 1024 * 1024; // 5MB per chunk
+      const totalChunks = Math.ceil(file.size / chunkSize);
+      const progressBar = document.getElementById('uploadProgressBar');
+      const statusText = document.getElementById('uploadStatus');
+
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * chunkSize;
+        const end = Math.min(file.size, start + chunkSize);
+        const chunk = file.slice(start, end);
+
+        const formData = new FormData();
+        formData.append('file', chunk);
+
+        try {
+          const response = await fetch(`${apiUrl}/upload?fileName=${encodeURIComponent(file.name)}&chunkIndex=${i}`, {
+            method: 'POST',
+            body: chunk
+          });
+
+          if (response.ok) {
+            progressBar.style.width = `${((i + 1) / totalChunks) * 100}%`;
+            statusText.textContent = `Uploading... ${Math.round(((i + 1) / totalChunks) * 100)}%`;
+          } else {
+            statusText.textContent = 'Error uploading file.';
+            return;
+          }
+        } catch (error) {
+          statusText.textContent = 'Error uploading file.';
+          return;
         }
-      };
+      }
+
+      statusText.textContent = 'File uploaded successfully!';
     }
 
-    // Send file
-    sendButton.onclick = async () => {
-      if (!fileInput.files.length) return alert('Please select a file');
+    async function downloadFile() {
+      const fileNameInput = document.getElementById('fileNameInput').value;
 
-      await setupConnection(true);
+      if (!fileNameInput) {
+        alert('Please enter a file name to download');
+        return;
+      }
 
-      const file = fileInput.files[0];
-      const CHUNK_SIZE = 16 * 1024;  // 16KB chunks
+      const statusText = document.getElementById('downloadStatus');
+      statusText.textContent = 'Downloading...';
 
-      dataChannel.onopen = () => {
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-          let offset = 0;
-          while (offset < file.size) {
-            const chunk = e.target.result.slice(offset, offset + CHUNK_SIZE);
-            if (dataChannel.readyState === 'open') {
-              dataChannel.send(chunk);
-              offset += CHUNK_SIZE;
-            } else {
-              console.error('Data channel is not open.');
-              break;
-            }
-          }
-          dataChannel.send('EOF');  // End of file transfer
-        };
-        reader.readAsArrayBuffer(file);
-      };
-
-      const offer = await peerConnection.createOffer();
-      await peerConnection.setLocalDescription(offer);
-      await sendSignal({ peerId, message: { sdp: peerConnection.localDescription } });
-      signalingTextarea.value = JSON.stringify(peerConnection.localDescription);
-    };
-
-    // Connect as receiver
-    connectButton.onclick = async () => {
       try {
-        await setupConnection(false);
+        const response = await fetch(`${apiUrl}/download/${encodeURIComponent(fileNameInput)}`);
 
-        // Get and parse the signaling data entered by the user
-        const signal = signalingTextarea.value.trim();
-        if (!signal) {
-          return alert('Please enter signaling data!');
-        }
+        if (response.ok) {
+          const blob = await response.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = fileNameInput;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
 
-        // Parse the signaling data and validate it
-        let parsedSignal;
-        try {
-          parsedSignal = JSON.parse(signal);
-        } catch (error) {
-          console.error('Error parsing signaling data:', error);
-          return alert('Invalid signaling data. Please ensure the format is correct.');
-        }
-
-        if (parsedSignal && parsedSignal.type && parsedSignal.sdp) {
-          // Set remote description and create an answer
-          const remoteDescription = new RTCSessionDescription(parsedSignal);
-          await peerConnection.setRemoteDescription(remoteDescription);
-          const answer = await peerConnection.createAnswer();
-          await peerConnection.setLocalDescription(answer);
-          await sendSignal({ peerId, message: { sdp: peerConnection.localDescription } });
-        } else if (parsedSignal.candidate) {
-          // Add ICE candidate
-          await peerConnection.addIceCandidate(new RTCIceCandidate(parsedSignal.candidate));
+          statusText.textContent = 'File downloaded successfully!';
         } else {
-          console.error('Invalid signaling data format.');
-          return alert('Signaling data is missing "sdp" or "candidate" fields.');
+          statusText.textContent = 'Error downloading file.';
         }
       } catch (error) {
-        console.error('Error connecting as receiver:', error);
-        alert('Error connecting as receiver. Check console for details.');
-      }
-    };
-
-    // Send signaling message to the Cloudflare Worker
-    async function sendSignal(signal) {
-      await fetch(signalingUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(signal),
-      });
-    }
-
-    // Receive file
-    function receiveFile(event) {
-      const received = event.data;
-      if (received === 'EOF') {
-        console.log('File transfer complete');
-      } else {
-        console.log('Received chunk:', received);
-        // Handle received file data (e.g., assemble and download)
+        statusText.textContent = 'Error downloading file.';
       }
     }
   </script>
+
 </body>
 </html>
