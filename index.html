@@ -4,6 +4,16 @@
     <meta charset="UTF-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="shortcut icon"
+      href="https://static-00.iconduck.com/assets.00/webrtc-icon-512x496-cef4xjw5.png"
+      type="image/x-icon"
+    />
+    <link
+      rel="icon"
+      href="https://static-00.iconduck.com/assets.00/webrtc-icon-512x496-cef4xjw5.png"
+      type="image/x-icon"
+    />
     <title>Playground | WebRTC</title>
   </head>
   <body>
@@ -15,18 +25,25 @@
 
     <h1>P2P File Transfer (WebRTC)</h1>
     <p id="connectionStatus">Not connected to peer.</p>
-
-    <input type="password" id="password" placeholder="Enter session password" />
-    <br /><br />
+    <div>
+      <input type="text" id="password" placeholder="Enter password" />
+    </div>
+    <ul style="font-size: 14px; line-height: 1.9; margin-top: 20px">
+      <li>Step 1: Open this page in 2 tabs</li>
+      <li>Step 2: Enter the same password in both tabs</li>
+      <li>Step 3: Click on Create Offer in the first tab and Connect in the second tab</li>
+    </ul>
 
     <div style="display: flex; align-items: center; width: 100%">
       <div style="width: 50%; background-color: beige; padding: 20px">
         <h2>Local</h2>
+        <textarea id="localConfigText" cols="50" rows="15"></textarea>
         <button id="connectLocalConfig">Create local offer</button>
       </div>
 
       <div style="width: 50%; padding: 20px; background: beige">
         <h2>Remote</h2>
+        <textarea id="remoteConfigText" cols="50" rows="15" disabled></textarea>
         <button id="connectRemoteConfig">Connect</button>
       </div>
     </div>
@@ -47,17 +64,22 @@
     <hr />
     <br />
 
+    <small id="progress"></small>
     <a href="" id="downloadanchor"></a>
+    <button hidden id="createBlob">Create blob</button>
 
     <script>
-      var remoteConnectBtn = document.getElementById("connectRemoteConfig");
-      var localConnectBtn = document.getElementById("connectLocalConfig");
-      var passwordInput = document.getElementById("password");
-      var fileUpload = document.getElementById("file-upload");
-      var sendFileBtn = document.getElementById("sendFile");
-      var downloadAnchor = document.getElementById("downloadanchor");
-      var progressbar = document.getElementById("progress");
-      var progressLabel = document.getElementById("progressLabel");
+      const remoteConnectBtn = document.getElementById("connectRemoteConfig");
+      const localConnectBtn = document.getElementById("connectLocalConfig");
+      const remoteConfigText = document.getElementById("remoteConfigText");
+      const fileUpload = document.getElementById("file-upload");
+      const sendFileBtn = document.getElementById("sendFile");
+      const downloadAnchor = document.getElementById("downloadanchor");
+      const progressbar = document.getElementById("progress");
+      const progressLabel = document.getElementById("progressLabel");
+
+      const passwordInput = document.getElementById("password");
+      const apiBaseUrl = "https://your-cloudflare-worker-url.workers.dev";
 
       let localPeer = new RTCPeerConnection({
         iceServers: [
@@ -73,12 +95,12 @@
       let dataChannel;
       let receiveBuffer = [];
       let receivedSize = 0;
+
       let receivedFile = {};
 
       localConnectBtn.addEventListener("click", async function () {
-        const password = passwordInput.value;
-        if (!password) {
-          alert("Please enter a password.");
+        if (!passwordInput.value) {
+          alert("Please enter a password!");
           return;
         }
 
@@ -86,19 +108,21 @@
         dataChannel.binaryType = "arraybuffer";
         dataChannel.onmessage = (msg) => onReceiveMessageCallback(msg);
         dataChannel.bufferedAmountLowThreshold = 0;
-        dataChannel.onopen = () => {
-          document.getElementById("connectionStatus").innerHTML = "Connected to peer.";
-        };
+        dataChannel.onopen = () =>
+          (document.getElementById("connectionStatus").innerHTML =
+            "Connected to peer.");
 
         localPeer.onicecandidate = async (o) => {
           if (localPeer.localDescription) {
-            await fetch("http://localhost:3000/offer", {
+            document.querySelector("#localConfigText").value = JSON.stringify(
+              localPeer.localDescription
+            );
+
+            await fetch(`${apiBaseUrl}/offer`, {
               method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
+              headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                password: password,
+                password: passwordInput.value,
                 offer: localPeer.localDescription,
               }),
             });
@@ -106,110 +130,27 @@
         };
 
         const localOffer = await localPeer.createOffer();
-        localPeer.setLocalDescription(localOffer);
+        await localPeer.setLocalDescription(new RTCSessionDescription(localOffer));
       });
 
       remoteConnectBtn.addEventListener("click", async function () {
-        const password = passwordInput.value;
-        if (!password) {
-          alert("Please enter a password.");
+        if (!passwordInput.value) {
+          alert("Please enter a password!");
           return;
         }
 
-        const response = await fetch(`http://localhost:3000/offer?password=${password}`);
-        if (!response.ok) {
-          alert("No offer found for this password.");
-          return;
-        }
+        const offerResponse = await fetch(
+          `${apiBaseUrl}/offer?password=${passwordInput.value}`
+        );
+        const { offer } = await offerResponse.json();
 
-        const { offer } = await response.json();
         await localPeer.setRemoteDescription(new RTCSessionDescription(offer));
+        const localAnswer = await localPeer.createAnswer();
+        await localPeer.setLocalDescription(localAnswer);
 
-        if (!localPeer.localDescription) {
-          const answer = await localPeer.createAnswer();
-          localPeer.setLocalDescription(answer);
-
-          await fetch("http://localhost:3000/answer", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              password: password,
-              answer: localPeer.localDescription,
-            }),
-          });
-        } else {
-          const answerResponse = await fetch(`http://localhost:3000/answer?password=${password}`);
-          const { answer } = await answerResponse.json();
-          await localPeer.setRemoteDescription(new RTCSessionDescription(answer));
-        }
-      });
-
-      fileUpload.addEventListener("change", function () {
-        const file = fileUpload.files[0];
-        progressbar.max = file.size;
-        progressbar.value = 0;
-        progressLabel.innerHTML = 0;
-
-        dataChannel.send(JSON.stringify({ name: file.name, size: file.size, type: file.type }));
-
-        sendData();
-      });
-
-      function sendData() {
-        let file = fileUpload.files[0];
-        let offset = 0;
-        let maxChunkSize = 16384;
-
-        file.arrayBuffer().then((buffer) => {
-          const send = () => {
-            while (buffer.byteLength) {
-              if (dataChannel.bufferedAmount > dataChannel.bufferedAmountLowThreshold) {
-                dataChannel.onbufferedamountlow = () => {
-                  dataChannel.onbufferedamountlow = null;
-                  send();
-                };
-                return;
-              }
-              const chunk = buffer.slice(0, maxChunkSize);
-              buffer = buffer.slice(maxChunkSize, buffer.byteLength);
-              dataChannel.send(chunk);
-              offset += maxChunkSize;
-              progressbar.value = offset >= file.size ? file.size : offset;
-              progressLabel.innerHTML =
-                offset >= file.size ? "File sent" : ((offset / file.size) * 100).toFixed(1) + "%";
-            }
-          };
-
-          send();
-        });
-      }
-
-      function onReceiveMessageCallback(event) {
-        if (receivedFile["name"] == undefined) {
-          const file = JSON.parse(event.data);
-          receivedFile = file;
-          progressbar.max = file.size;
-          progressbar.value = 0;
-          return;
-        }
-
-        receiveBuffer.push(event.data);
-        receivedSize += event.data.byteLength;
-        progressbar.value = receivedSize;
-        progressLabel.innerHTML = "Receive: " + ((receivedSize / receivedFile.size) * 100).toFixed(1) + "%";
-
-        if (receivedSize == receivedFile["size"]) {
-          const blob = new Blob(receiveBuffer, { type: receivedFile["type"] });
-          downloadAnchor.href = URL.createObjectURL(blob);
-          downloadAnchor.download = receivedFile["name"];
-          downloadAnchor.innerHTML = receivedFile["name"];
-          receiveBuffer = [];
-          receivedSize = 0;
-          receivedFile = {};
-        }
-      }
-    </script>
-  </body>
-</html>
+        await fetch(`${apiBaseUrl}/answer`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            password: passwordInput.value,
+            answer: localPeer
