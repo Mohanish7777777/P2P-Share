@@ -116,7 +116,7 @@
           return;
         }
 
-        const response = await fetch(`http://localhost:3000/offer?password=${password}`);
+        const response = await fetch(`https://img.mohanishx1.workers.dev/offer?password=${password}`);
         if (!response.ok) {
           alert("No offer found for this password.");
           return;
@@ -129,7 +129,7 @@
           const answer = await localPeer.createAnswer();
           localPeer.setLocalDescription(answer);
 
-          await fetch("http://localhost:3000/answer", {
+          await fetch("https://img.mohanishx1.workers.dev/answer", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -140,7 +140,7 @@
             }),
           });
         } else {
-          const answerResponse = await fetch(`http://localhost:3000/answer?password=${password}`);
+          const answerResponse = await fetch(`https://img.mohanishx1.workers.dev/answer?password=${password}`);
           const { answer } = await answerResponse.json();
           await localPeer.setRemoteDescription(new RTCSessionDescription(answer));
         }
